@@ -1,0 +1,12 @@
+# Local Claude Code config (preview server etc.) — not needed in deployment
+.claude/
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor noise
+.vscode/
+.idea/
+*.swp
