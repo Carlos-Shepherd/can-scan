@@ -1,5 +1,5 @@
 // Bump this when shipping changes so clients pick up the new shell.
-const CACHE_VERSION = "v4";
+const CACHE_VERSION = "v5";
 const CACHE_NAME = `can-scan-${CACHE_VERSION}`;
 
 const APP_SHELL = [

@@ -11,7 +11,7 @@
   const DB_NAME = "can-scan";
   const DB_VERSION = 1;
   const STORE = "scans";
-  const REPEAT_WINDOW_MS = 3000; // ignore identical scan within this window
+  const REPEAT_WINDOW_MS = 1500; // ignore identical scan within this window
 
   // ---------- IndexedDB layer ----------
 
@@ -215,28 +215,54 @@
   let scanner = null;
   let lastDecoded = { value: null, at: 0 };
 
-  // html5-qrcode 2.x rejects with strings or plain Errors, not DOMException —
-  // and its first-arg parser only reads facingMode/deviceId, so width/advanced
-  // constraints on the first arg get silently dropped. We keep the start call
-  // minimal and apply autofocus via the live track after start succeeds.
   function errorText(err) {
     if (!err) return "";
     if (typeof err === "string") return err;
     return err.message || err.name || String(err);
   }
 
-  async function applyContinuousAutofocus() {
+  // Phones with multiple back cameras (Pixel, Samsung, iPhone) expose all of
+  // them with facingMode=environment, and the browser frequently picks the
+  // ultra-wide. Enumerate and filter out anything labelled wide/ultra/tele.
+  async function pickBackCamera() {
+    try {
+      const cameras = await Html5Qrcode.getCameras();
+      if (!cameras || !cameras.length) return null;
+      const isBack = (c) =>
+        !c.label || /back|environment|rear/i.test(c.label);
+      const isNotMain = (c) =>
+        /ultra.?wide|wide.?angle|telephoto|^wide|\b0\.\d+x?\b|\bx?\d+x\b/i.test(c.label);
+      const back = cameras.filter(isBack);
+      const pool = back.length ? back : cameras;
+      const main = pool.find((c) => !isNotMain(c)) || pool[0];
+      return { id: main.id, label: main.label || "(unlabeled)" };
+    } catch (err) {
+      console.warn("pickBackCamera failed:", err);
+      return null;
+    }
+  }
+
+  async function applyTrackConstraints() {
     try {
       const video = document.querySelector("#reader video");
       if (!video || !video.srcObject) return;
       const track = video.srcObject.getVideoTracks()[0];
       if (!track) return;
       const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const advanced = [];
       if (caps.focusMode && caps.focusMode.includes("continuous")) {
-        await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+        advanced.push({ focusMode: "continuous" });
       }
-    } catch (_) {
-      // Most phone cameras default to continuous AF anyway — non-fatal.
+      // Force 1x zoom — defeats software ultra-wide on some Androids
+      if (caps.zoom && typeof caps.zoom.min === "number" && caps.zoom.min <= 1) {
+        advanced.push({ zoom: 1 });
+      }
+      if (advanced.length) {
+        await track.applyConstraints({ advanced });
+      }
+      console.log("Camera caps:", caps, "applied:", advanced);
+    } catch (err) {
+      console.warn("applyTrackConstraints failed:", err);
     }
   }
 
@@ -247,15 +273,41 @@
       return;
     }
     scanner = new Html5Qrcode("reader", { verbose: false });
-    const scanConfig = { fps: 10, qrbox: { width: 250, height: 250 } };
+
+    const cam = await pickBackCamera();
+    const cameraSelector = cam
+      ? { deviceId: { exact: cam.id } }
+      : { facingMode: "environment" };
+
+    // videoConstraints (when set) override the first-arg camera selection.
+    // We use them to request high-res + autofocus alongside the chosen device.
+    const videoConstraints = {
+      ...(cam
+        ? { deviceId: { exact: cam.id } }
+        : { facingMode: "environment" }),
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ focusMode: "continuous" }],
+    };
+
+    const scanConfig = {
+      fps: 30,
+      qrbox: { width: 280, height: 280 },
+      aspectRatio: 1.7777778, // 16:9 — most phone cameras' native ratio
+      disableFlip: true,      // QR codes never need mirror-decode → faster
+      videoConstraints,
+      // Native BarcodeDetector when available (Android Chrome) — orders of
+      // magnitude faster than the jsQR fallback.
+      experimentalFeatures: { useBarCodeDetectorIfSupported: true },
+    };
+    if (typeof Html5QrcodeSupportedFormats !== "undefined") {
+      scanConfig.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
+    }
+
     try {
-      await scanner.start(
-        { facingMode: "environment" },
-        scanConfig,
-        onDecoded,
-        () => {}
-      );
-      applyContinuousAutofocus();
+      await scanner.start(cameraSelector, scanConfig, onDecoded, () => {});
+      applyTrackConstraints();
+      if (cam) console.log("Camera selected:", cam.label, cam.id);
       els.startBtn.hidden = true;
       els.stopBtn.hidden = false;
     } catch (err) {
