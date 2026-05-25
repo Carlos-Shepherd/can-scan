@@ -103,10 +103,13 @@
 
     #reader {
       width: 100%;
-      min-height: 240px;
+      height: 30vh;
+      min-height: 200px;
+      max-height: 320px;
       border-radius: 10px;
       overflow: hidden;
       background: #000;
+      position: relative;
     }
 
     #reader:empty {
@@ -119,6 +122,12 @@
 
     #reader:empty::after {
       content: "Camera off — tap Start";
+    }
+
+    /* Constrain html5-qrcode's injected wrapper to fill our box */
+    #reader__scan_region {
+      height: 100% !important;
+      width: 100% !important;
     }
 
     .scanner-controls {
@@ -353,8 +362,10 @@
     #reader__camera_selection { display: none !important; }
 
     #reader video {
-      border-radius: 10px;
+      border-radius: 0 !important;
       width: 100% !important;
+      height: 100% !important;
+      object-fit: cover !important;
     }
   </style>
 </head>
