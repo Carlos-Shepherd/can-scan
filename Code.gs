@@ -3,7 +3,7 @@
  *
  * Setup (see the project's qr-scanner-pwa-build-plan.md for full context):
  *   1. Create a Google Sheet. Row 1 headers (in this order):
- *        A: URL    B: Timestamp    C: Note    D: Scan ID
+ *        A: URL    B: Code    C: Timestamp    D: Note    E: Scan ID
  *      Copy the sheet's ID from its URL: the long string between /d/ and /edit.
  *   2. Paste that ID into SHEET_ID below. If you renamed the tab from "Sheet1",
  *      update SHEET_NAME too.
@@ -49,10 +49,10 @@ function doPost(e) {
     }
 
     // Idempotency: skip if this scan ID has already been written.
-    // Column D = Scan ID; rows start at 2 (row 1 is the header).
+    // Column E (index 5) = Scan ID; rows start at 2 (row 1 is the header).
     const lastRow = sheet.getLastRow();
     if (lastRow >= 2) {
-      const existingIds = sheet.getRange(2, 4, lastRow - 1, 1).getValues();
+      const existingIds = sheet.getRange(2, 5, lastRow - 1, 1).getValues();
       for (let i = 0; i < existingIds.length; i++) {
         if (existingIds[i][0] === scan.id) {
           return json({ ok: true, duplicate: true });
@@ -62,6 +62,7 @@ function doPost(e) {
 
     sheet.appendRow([
       scan.url,
+      scan.code || "",
       new Date(scan.timestamp),
       scan.note || "",
       scan.id,

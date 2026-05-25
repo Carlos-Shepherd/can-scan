@@ -159,12 +159,11 @@
     }
 
     .last-scan {
-      padding: 10px 12px;
+      padding: 12px 14px;
       background: var(--bg);
       border-radius: 10px;
       border: 1px solid var(--border);
       word-break: break-all;
-      font-size: 0.9rem;
     }
 
     .last-scan.flash {
@@ -172,14 +171,28 @@
     }
 
     @keyframes flash {
-      0%   { background: rgba(34, 211, 238, 0.35); border-color: var(--accent); }
+      0%   { background: rgba(34, 197, 94, 0.25); border-color: var(--success); }
       100% { background: var(--bg); border-color: var(--border); }
+    }
+
+    .last-scan .code {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 1.15rem;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: 0.02em;
+    }
+
+    .last-scan .url {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-top: 4px;
     }
 
     .last-scan .meta {
       color: var(--text-dim);
-      font-size: 0.75rem;
-      margin-top: 4px;
+      font-size: 0.72rem;
+      margin-top: 6px;
     }
 
     .note-row {
@@ -245,10 +258,20 @@
       min-width: 0;
     }
 
-    .history-url {
-      font-size: 0.9rem;
-      word-break: break-all;
+    .history-code {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.95rem;
+      font-weight: 600;
       color: var(--text);
+      letter-spacing: 0.02em;
+      word-break: break-all;
+    }
+
+    .history-url {
+      font-size: 0.72rem;
+      word-break: break-all;
+      color: var(--text-dim);
+      margin-top: 2px;
     }
 
     .history-meta {
@@ -285,6 +308,44 @@
     }
 
     .toast.visible { opacity: 1; }
+
+    /* Full-screen success flash on each scan */
+    .scan-flash {
+      position: fixed;
+      inset: 0;
+      background: #22c55e;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 220ms ease-out;
+      z-index: 999;
+      mix-blend-mode: screen;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .scan-flash svg {
+      width: 30vw;
+      max-width: 180px;
+      height: auto;
+      transform: scale(0.7);
+      transition: transform 220ms cubic-bezier(0.34, 1.56, 0.64, 1);
+      stroke: white;
+      stroke-width: 3;
+      fill: none;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .scan-flash.visible {
+      opacity: 0.6;
+      transition: opacity 60ms ease-in;
+    }
+
+    .scan-flash.visible svg {
+      transform: scale(1);
+      transition: transform 180ms cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
 
     /* html5-qrcode injects controls we want to hide */
     #reader__dashboard,
@@ -333,6 +394,10 @@
   </section>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <div id="scan-flash" class="scan-flash" aria-hidden="true">
+    <svg viewBox="0 0 24 24"><polyline points="5,12 10,17 19,8"></polyline></svg>
+  </div>
 
   <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
   <script src="config.js"></script>

@@ -97,6 +97,21 @@
     }
   }
 
+  // Extracts the last path segment from a URL. Trailing slashes, query strings,
+  // and fragments are stripped. For non-URL input, returns the text after the
+  // last "/" (or the whole string if there isn't one). Falls back to "" if empty.
+  function extractCode(text) {
+    if (!text) return "";
+    try {
+      const u = new URL(text);
+      const parts = u.pathname.split("/").filter(Boolean);
+      return parts[parts.length - 1] || "";
+    } catch (_) {
+      const m = String(text).trim().match(/[^/]+$/);
+      return m ? m[0] : "";
+    }
+  }
+
   // ---------- UI ----------
 
   const els = {
@@ -110,7 +125,16 @@
     historyEmpty: document.getElementById("history-empty"),
     connection: document.getElementById("connection-status"),
     toast: document.getElementById("toast"),
+    flash: document.getElementById("scan-flash"),
   };
+
+  let flashTimer = null;
+  function flashSuccess() {
+    if (!els.flash) return;
+    els.flash.classList.add("visible");
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => els.flash.classList.remove("visible"), 220);
+  }
 
   let toastTimer = null;
   function toast(msg) {
@@ -130,7 +154,11 @@
   function renderLastScan(scan) {
     els.lastScanSection.hidden = false;
     els.lastScan.innerHTML = "";
+    const code = document.createElement("div");
+    code.className = "code";
+    code.textContent = scan.code || "(no code)";
     const url = document.createElement("div");
+    url.className = "url";
     url.textContent = scan.url;
     const meta = document.createElement("div");
     meta.className = "meta";
@@ -138,7 +166,7 @@
     if (scan.note) parts.push(`note: ${scan.note}`);
     parts.push(scan.status);
     meta.textContent = parts.join(" · ");
-    els.lastScan.append(url, meta);
+    els.lastScan.append(code, url, meta);
     els.lastScan.classList.remove("flash");
     // force reflow so animation restarts
     void els.lastScan.offsetWidth;
@@ -157,6 +185,9 @@
       dot.title = scan.status;
       const body = document.createElement("div");
       body.className = "history-body";
+      const code = document.createElement("div");
+      code.className = "history-code";
+      code.textContent = scan.code || "(no code)";
       const url = document.createElement("div");
       url.className = "history-url";
       url.textContent = scan.url;
@@ -173,7 +204,7 @@
       const sspan = document.createElement("span");
       sspan.textContent = scan.status;
       meta.append(sspan);
-      body.append(url, meta);
+      body.append(code, url, meta);
       li.append(dot, body);
       els.history.append(li);
     }
@@ -193,7 +224,13 @@
     scanner = new Html5Qrcode("reader", { verbose: false });
     try {
       await scanner.start(
-        { facingMode: "environment" },
+        {
+          facingMode: "environment",
+          // Hints — unsupported entries are silently ignored by the browser.
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          advanced: [{ focusMode: "continuous" }],
+        },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         onDecoded,
         () => { /* per-frame decode failures are noisy — ignore */ }
@@ -230,6 +267,7 @@
     const scan = {
       id: uuid(),
       url: text,
+      code: extractCode(text),
       timestamp: now,
       note: els.noteInput.value.trim() || "",
       status: "pending",
@@ -237,6 +275,7 @@
     await putScan(scan);
     renderLastScan(scan);
     renderHistory();
+    flashSuccess();
     vibrate(60);
 
     // try to sync immediately; if offline, it'll wait
@@ -288,6 +327,7 @@
           scan: {
             id: scan.id,
             url: scan.url,
+            code: scan.code || extractCode(scan.url),
             timestamp: scan.timestamp,
             note: scan.note || "",
           },
