@@ -215,6 +215,31 @@
   let scanner = null;
   let lastDecoded = { value: null, at: 0 };
 
+  // html5-qrcode 2.x rejects with strings or plain Errors, not DOMException —
+  // and its first-arg parser only reads facingMode/deviceId, so width/advanced
+  // constraints on the first arg get silently dropped. We keep the start call
+  // minimal and apply autofocus via the live track after start succeeds.
+  function errorText(err) {
+    if (!err) return "";
+    if (typeof err === "string") return err;
+    return err.message || err.name || String(err);
+  }
+
+  async function applyContinuousAutofocus() {
+    try {
+      const video = document.querySelector("#reader video");
+      if (!video || !video.srcObject) return;
+      const track = video.srcObject.getVideoTracks()[0];
+      if (!track) return;
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.focusMode && caps.focusMode.includes("continuous")) {
+        await track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+      }
+    } catch (_) {
+      // Most phone cameras default to continuous AF anyway — non-fatal.
+    }
+  }
+
   async function startScanner() {
     if (scanner) return;
     if (typeof Html5Qrcode === "undefined") {
@@ -222,53 +247,38 @@
       return;
     }
     scanner = new Html5Qrcode("reader", { verbose: false });
-
-    // Preferred constraints (hint at autofocus + 720p). If the browser
-    // chokes on the advanced hints (some iOS builds throw OverconstrainedError
-    // for unknown advanced entries), fall back to bare facingMode.
-    const preferred = {
-      facingMode: "environment",
-      width: { ideal: 1280 },
-      height: { ideal: 720 },
-      advanced: [{ focusMode: "continuous" }],
-    };
-    const fallback = { facingMode: "environment" };
     const scanConfig = { fps: 10, qrbox: { width: 250, height: 250 } };
-
-    const attempt = async (constraints) => {
-      await scanner.start(constraints, scanConfig, onDecoded, () => {});
-    };
-
     try {
-      await attempt(preferred);
+      await scanner.start(
+        { facingMode: "environment" },
+        scanConfig,
+        onDecoded,
+        () => {}
+      );
+      applyContinuousAutofocus();
+      els.startBtn.hidden = true;
+      els.stopBtn.hidden = false;
     } catch (err) {
-      // Permission denials are terminal — don't retry, just surface a useful message.
-      if (err && (err.name === "NotAllowedError" || /permission/i.test(String(err.message)))) {
-        console.error("Camera permission denied:", err);
-        toast("Camera blocked. iOS: Settings → Safari → Camera → Ask");
-        scanner = null;
-        return;
+      const msg = errorText(err);
+      console.error("Camera start failed:", err, "—", msg);
+      let toastMsg;
+      if (/notallowed|permission|denied/i.test(msg)) {
+        toastMsg = "Camera blocked — allow it in site permissions and reload";
+      } else if (/notfound|no.*camera/i.test(msg)) {
+        toastMsg = "No camera found on this device";
+      } else if (/notreadable|in use/i.test(msg)) {
+        toastMsg = "Camera is in use by another app";
+      } else if (/overconstrained|constraint/i.test(msg)) {
+        toastMsg = "Camera doesn't support the requested settings";
+      } else if (/insecure|https/i.test(msg)) {
+        toastMsg = "Camera needs HTTPS — open the GitHub Pages URL, not localhost";
+      } else {
+        toastMsg = "Camera error: " + (msg.slice(0, 80) || "unknown");
       }
-      // Camera not found / in use by another app → also terminal.
-      if (err && (err.name === "NotFoundError" || err.name === "NotReadableError")) {
-        console.error("Camera unavailable:", err);
-        toast(err.name === "NotFoundError" ? "No camera found on this device" : "Camera is in use by another app");
-        scanner = null;
-        return;
-      }
-      // Otherwise (likely OverconstrainedError from the advanced hints) — retry minimal.
-      console.warn("Camera start failed with preferred constraints, retrying minimal:", err);
-      try {
-        await attempt(fallback);
-      } catch (err2) {
-        console.error("Camera start failed (fallback):", err2);
-        toast("Couldn't start camera: " + (err2.name || "unknown error"));
-        scanner = null;
-        return;
-      }
+      toast(toastMsg);
+      try { await scanner.clear(); } catch (_) {}
+      scanner = null;
     }
-    els.startBtn.hidden = true;
-    els.stopBtn.hidden = false;
   }
 
   async function stopScanner() {
