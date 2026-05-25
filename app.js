@@ -358,20 +358,14 @@
     els.stopBtn.hidden = true;
   }
 
-  let lastWrongScanToast = 0;
-
   async function onDecoded(text) {
     const now = Date.now();
 
-    // Cans carry both a UPC barcode and our URL-bearing QR. The native
-    // BarcodeDetector happily decodes either, so we filter to URLs only —
-    // tells the user to re-aim if they hit the UPC by mistake.
-    if (!/^https?:\/\//i.test(text)) {
-      console.log("Ignoring non-URL scan (likely the UPC):", text);
-      if (now - lastWrongScanToast > 2000) {
-        toast("That looked like the barcode — aim at the QR code");
-        lastWrongScanToast = now;
-      }
+    // Cans carry both a UPC barcode and the URL-bearing QR. Native
+    // BarcodeDetector decodes either. UPC-A/EAN are purely numeric, 8–14
+    // digits — silently skip them so the decoder keeps hunting for the QR
+    // without interrupting the user.
+    if (/^\d{8,14}$/.test(text)) {
       return;
     }
 
