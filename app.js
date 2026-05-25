@@ -304,7 +304,13 @@
 
     const scanConfig = {
       fps: 30,
-      qrbox: { width: 280, height: 280 },
+      // Scale the scan region with whatever resolution the camera gives us
+      // (1920x1080 → 756x756 box). Fixed pixel sizes were way too small when
+      // the camera went hi-res, so QRs in clear view fell outside the box.
+      qrbox: (vw, vh) => {
+        const s = Math.floor(Math.min(vw, vh) * 0.7);
+        return { width: s, height: s };
+      },
       aspectRatio: 1.7777778, // 16:9 — most phone cameras' native ratio
       disableFlip: true,      // QR codes never need mirror-decode → faster
       videoConstraints,
