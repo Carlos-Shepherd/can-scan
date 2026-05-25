@@ -358,8 +358,23 @@
     els.stopBtn.hidden = true;
   }
 
+  let lastWrongScanToast = 0;
+
   async function onDecoded(text) {
     const now = Date.now();
+
+    // Cans carry both a UPC barcode and our URL-bearing QR. The native
+    // BarcodeDetector happily decodes either, so we filter to URLs only —
+    // tells the user to re-aim if they hit the UPC by mistake.
+    if (!/^https?:\/\//i.test(text)) {
+      console.log("Ignoring non-URL scan (likely the UPC):", text);
+      if (now - lastWrongScanToast > 2000) {
+        toast("That looked like the barcode — aim at the QR code");
+        lastWrongScanToast = now;
+      }
+      return;
+    }
+
     if (text === lastDecoded.value && now - lastDecoded.at < REPEAT_WINDOW_MS) {
       return; // rapid repeat — silently skip
     }
