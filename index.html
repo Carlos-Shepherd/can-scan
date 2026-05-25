@@ -232,6 +232,15 @@
       border-color: var(--accent);
     }
 
+    .history-count {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-left: 6px;
+      font-weight: 400;
+      letter-spacing: 0;
+      text-transform: none;
+    }
+
     ul.history {
       list-style: none;
       padding: 0;
@@ -397,7 +406,7 @@
 
   <section id="history-section">
     <header>
-      <h2>History</h2>
+      <h2>History <span id="history-count" class="history-count"></span></h2>
       <button id="sync-btn" type="button" class="secondary small">Sync now</button>
     </header>
     <ul id="history-list" class="history"></ul>
@@ -415,7 +424,7 @@
     // Adds a floating green button; tap to open console / elements / network.
     if (new URLSearchParams(location.search).has("debug")) {
       const s = document.createElement("script");
-      s.src = "https://cdn.jsdelivr.net/npm/eruda";
+      s.src = "https://cdn.jsdelivr.net/npm/eruda@3.4.3";
       s.onload = () => window.eruda && eruda.init();
       document.head.appendChild(s);
     }

@@ -49,14 +49,18 @@ function doPost(e) {
     }
 
     // Idempotency: skip if this scan ID has already been written.
-    // Column E (index 5) = Scan ID; rows start at 2 (row 1 is the header).
+    // Column E (index 5) = Scan ID. TextFinder runs server-side so we don't
+    // read the whole column into the script runtime — O(1) cost regardless
+    // of sheet size, which matters once the log grows past a few thousand rows
+    // (the prior loop hit the 6-second web-app timeout there).
     const lastRow = sheet.getLastRow();
     if (lastRow >= 2) {
-      const existingIds = sheet.getRange(2, 5, lastRow - 1, 1).getValues();
-      for (let i = 0; i < existingIds.length; i++) {
-        if (existingIds[i][0] === scan.id) {
-          return json({ ok: true, duplicate: true });
-        }
+      const finder = sheet
+        .getRange(2, 5, lastRow - 1, 1)
+        .createTextFinder(scan.id)
+        .matchEntireCell(true);
+      if (finder.findNext() !== null) {
+        return json({ ok: true, duplicate: true });
       }
     }
 

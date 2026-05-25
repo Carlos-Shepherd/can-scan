@@ -12,6 +12,7 @@
   const DB_VERSION = 1;
   const STORE = "scans";
   const REPEAT_WINDOW_MS = 1500; // ignore identical scan within this window
+  const HISTORY_RENDER_LIMIT = 100; // newest N shown in UI (all still synced)
 
   // ---------- IndexedDB layer ----------
 
@@ -123,6 +124,7 @@
     lastScan: document.getElementById("last-scan"),
     history: document.getElementById("history-list"),
     historyEmpty: document.getElementById("history-empty"),
+    historyCount: document.getElementById("history-count"),
     connection: document.getElementById("connection-status"),
     toast: document.getElementById("toast"),
     flash: document.getElementById("scan-flash"),
@@ -176,9 +178,16 @@
   async function renderHistory() {
     const all = await getAllScans();
     all.sort((a, b) => b.timestamp - a.timestamp);
-    els.history.innerHTML = "";
+    const shown = all.slice(0, HISTORY_RENDER_LIMIT);
     els.historyEmpty.hidden = all.length > 0;
-    for (const scan of all) {
+    if (els.historyCount) {
+      els.historyCount.textContent =
+        all.length > HISTORY_RENDER_LIMIT
+          ? `${HISTORY_RENDER_LIMIT} of ${all.length}`
+          : "";
+    }
+    const frag = document.createDocumentFragment();
+    for (const scan of shown) {
       const li = document.createElement("li");
       const dot = document.createElement("span");
       dot.className = `history-status ${scan.status}`;
@@ -206,8 +215,10 @@
       meta.append(sspan);
       body.append(code, url, meta);
       li.append(dot, body);
-      els.history.append(li);
+      frag.append(li);
     }
+    els.history.innerHTML = "";
+    els.history.append(frag);
   }
 
   // ---------- Scanner ----------
@@ -450,11 +461,31 @@
         }),
         redirect: "follow",
       });
-      if (!res.ok) return false;
-      const data = await res.json().catch(() => null);
-      return !!(data && data.ok);
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        console.warn("Sync HTTP", res.status, body.slice(0, 200));
+        return false;
+      }
+      const text = await res.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (_) {
+        // Most common cause: deployment URL is stale and Google served the
+        // login/redirect HTML page instead of the script response.
+        console.warn(
+          "Sync non-JSON response (deployment URL stale or auth changed?):",
+          text.slice(0, 200)
+        );
+        return false;
+      }
+      if (!data.ok) {
+        console.warn("Sync rejected by script:", data.error || data);
+        return false;
+      }
+      return true;
     } catch (err) {
-      console.warn("Sync POST failed:", err);
+      console.warn("Sync POST exception:", err);
       return false;
     }
   }
@@ -472,7 +503,13 @@
   window.addEventListener("offline", renderConnection);
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) syncPending();
+    if (document.hidden) {
+      // Release the camera when the app is backgrounded — keeps the camera
+      // indicator light off and saves battery. User taps Start to resume.
+      if (scanner) stopScanner();
+    } else {
+      syncPending();
+    }
   });
 
   // Init
