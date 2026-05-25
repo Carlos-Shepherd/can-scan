@@ -222,19 +222,31 @@
   }
 
   // Phones with multiple back cameras (Pixel, Samsung, iPhone) expose all of
-  // them with facingMode=environment, and the browser frequently picks the
-  // ultra-wide. Enumerate and filter out anything labelled wide/ultra/tele.
+  // them with facingMode=environment. The browser frequently picks the wrong
+  // one — on Samsung the default lands on a depth/macro/telephoto sensor that
+  // doesn't even support autofocus.
+  //
+  // Heuristic: enumerate, drop front + obvious aux lenses (ultra-wide / tele /
+  // depth / macro), then prefer the *lowest* "camera N" number — on Android
+  // this is conventionally the main lens. iPhone labels lack numbers, so it
+  // falls back to enumeration order, which is fine there.
   async function pickBackCamera() {
     try {
       const cameras = await Html5Qrcode.getCameras();
       if (!cameras || !cameras.length) return null;
       const isBack = (c) =>
         !c.label || /back|environment|rear/i.test(c.label);
-      const isNotMain = (c) =>
-        /ultra.?wide|wide.?angle|telephoto|^wide|\b0\.\d+x?\b|\bx?\d+x\b/i.test(c.label);
+      const isAux = (c) =>
+        /ultra.?wide|wide.?angle|telephoto|^wide|\b0\.\d+x?\b|\bx?\d+x\b|depth|macro/i.test(c.label);
+      const cameraNum = (c) => {
+        const m = (c.label || "").match(/camera\s+(\d+)/i);
+        return m ? parseInt(m[1], 10) : 999;
+      };
       const back = cameras.filter(isBack);
       const pool = back.length ? back : cameras;
-      const main = pool.find((c) => !isNotMain(c)) || pool[0];
+      const main = pool
+        .filter((c) => !isAux(c))
+        .sort((a, b) => cameraNum(a) - cameraNum(b))[0] || pool[0];
       return { id: main.id, label: main.label || "(unlabeled)" };
     } catch (err) {
       console.warn("pickBackCamera failed:", err);
