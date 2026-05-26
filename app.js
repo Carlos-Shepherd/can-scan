@@ -405,27 +405,70 @@
       const track = video.srcObject.getVideoTracks()[0];
       if (!track) return;
       const caps = track.getCapabilities ? track.getCapabilities() : {};
+      const beforeSettings = track.getSettings ? track.getSettings() : {};
+      console.log("Camera caps:", caps, "before:", beforeSettings);
+      Status.log(
+        `caps: ${caps.width ? caps.width.max + "x" + caps.height.max : "?"} ` +
+        `(currently ${beforeSettings.width}x${beforeSettings.height})`
+      );
+
+      // Push to the camera's native max resolution. getUserMedia's "ideal"
+      // hint was returning 612x1088 on Samsung Galaxy — way too low for a QR
+      // that isn't filling the frame. Each QR module needs ~5+ pixels for the
+      // decoder to recognize it. applyConstraints on the live track lets us
+      // upgrade after we know what the camera can actually do.
+      const targetWidth = caps.width && caps.width.max ? caps.width.max : 1920;
+      const targetHeight = caps.height && caps.height.max ? caps.height.max : 1080;
+
       const advanced = [];
       if (caps.focusMode && caps.focusMode.includes("continuous")) {
         advanced.push({ focusMode: "continuous" });
       }
-      // Force 1x zoom — defeats software ultra-wide on some Androids
       if (caps.zoom && typeof caps.zoom.min === "number" && caps.zoom.min <= 1) {
         advanced.push({ zoom: 1 });
       }
-      if (advanced.length) {
-        await track.applyConstraints({ advanced });
+
+      try {
+        await track.applyConstraints({
+          width: { ideal: targetWidth },
+          height: { ideal: targetHeight },
+          advanced,
+        });
+      } catch (e) {
+        // Retry without resolution if the camera refused it
+        console.warn("Hi-res applyConstraints failed, retrying without:", e);
+        if (advanced.length) await track.applyConstraints({ advanced });
       }
-      console.log("Camera caps:", caps, "applied:", advanced);
-      const settings = track.getSettings ? track.getSettings() : {};
+
+      const afterSettings = track.getSettings ? track.getSettings() : {};
+      console.log("Camera applied:", afterSettings);
+      const upgraded =
+        (afterSettings.width || 0) > (beforeSettings.width || 0) ||
+        (afterSettings.height || 0) > (beforeSettings.height || 0);
+      if (upgraded) {
+        Status.success(
+          `resolution upgraded ${beforeSettings.width}x${beforeSettings.height} → ` +
+          `${afterSettings.width}x${afterSettings.height}`
+        );
+      } else if (
+        afterSettings.width &&
+        targetWidth &&
+        afterSettings.width < targetWidth * 0.6
+      ) {
+        Status.warn(
+          `low res: got ${afterSettings.width}x${afterSettings.height}, ` +
+          `max is ${targetWidth}x${targetHeight}`
+        );
+      }
       Status.setCameraInfo({
         label: state_cameraLabel || "(unknown)",
-        resolution: `${settings.width || "?"}x${settings.height || "?"}`,
-        focusMode: settings.focusMode,
-        zoom: settings.zoom,
+        resolution: `${afterSettings.width || "?"}x${afterSettings.height || "?"}`,
+        focusMode: afterSettings.focusMode,
+        zoom: afterSettings.zoom,
       });
     } catch (err) {
       console.warn("applyTrackConstraints failed:", err);
+      Status.warn("applyTrackConstraints failed: " + (err.message || err));
     }
   }
 
