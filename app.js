@@ -472,22 +472,24 @@
 
       const afterSettings = track.getSettings ? track.getSettings() : {};
       console.log("Camera applied:", afterSettings);
-      const upgraded =
-        (afterSettings.width || 0) > (beforeSettings.width || 0) ||
-        (afterSettings.height || 0) > (beforeSettings.height || 0);
-      if (upgraded) {
+      // Compare by area, not by width/height — going from 1088x612 to 612x1088
+      // is the same total pixel area, just rotated, and shouldn't be reported
+      // as an upgrade.
+      const beforeArea = (beforeSettings.width || 0) * (beforeSettings.height || 0);
+      const afterArea  = (afterSettings.width  || 0) * (afterSettings.height  || 0);
+      const targetArea = (targetWidth || 0) * (targetHeight || 0);
+      if (afterArea > beforeArea * 1.1) {
         Status.success(
           `resolution upgraded ${beforeSettings.width}x${beforeSettings.height} → ` +
-          `${afterSettings.width}x${afterSettings.height}`
+          `${afterSettings.width}x${afterSettings.height} ` +
+          `(${(afterArea / 1e6).toFixed(1)} MP)`
         );
-      } else if (
-        afterSettings.width &&
-        targetWidth &&
-        afterSettings.width < targetWidth * 0.6
-      ) {
+      } else if (targetArea && afterArea < targetArea * 0.3) {
         Status.warn(
-          `low res: got ${afterSettings.width}x${afterSettings.height}, ` +
-          `max is ${targetWidth}x${targetHeight}`
+          `low res: got ${afterSettings.width}x${afterSettings.height} ` +
+          `(${(afterArea / 1e6).toFixed(2)} MP), ` +
+          `sensor max ${targetWidth}x${targetHeight} (${(targetArea / 1e6).toFixed(1)} MP) — ` +
+          `browser is capping`
         );
       }
       Status.setCameraInfo({
@@ -528,25 +530,17 @@
       advanced: [{ focusMode: "continuous" }],
     };
 
+    // Bare-bones config: we proved via the Test button that BarcodeDetector
+    // decodes the QR fine on the full frame with all formats. Earlier we had
+    // qrbox cropping, format restriction to QR_CODE, disableFlip, and a
+    // 16:9 aspect hint — the live loop hit 240 frames with 0 decodes while
+    // Test got the same QR in 31ms. Stripping the extras forces the live
+    // loop to match Test. Filter UPCs at the callback layer as before.
     const scanConfig = {
       fps: 30,
-      // Scale the scan region with whatever resolution the camera gives us
-      // (1920x1080 → 756x756 box). Fixed pixel sizes were way too small when
-      // the camera went hi-res, so QRs in clear view fell outside the box.
-      qrbox: (vw, vh) => {
-        const s = Math.floor(Math.min(vw, vh) * 0.7);
-        return { width: s, height: s };
-      },
-      aspectRatio: 1.7777778, // 16:9 — most phone cameras' native ratio
-      disableFlip: true,      // QR codes never need mirror-decode → faster
       videoConstraints,
-      // Native BarcodeDetector when available (Android Chrome) — orders of
-      // magnitude faster than the jsQR fallback.
       experimentalFeatures: { useBarCodeDetectorIfSupported: true },
     };
-    if (typeof Html5QrcodeSupportedFormats !== "undefined") {
-      scanConfig.formatsToSupport = [Html5QrcodeSupportedFormats.QR_CODE];
-    }
 
     try {
       Status.resetSession();
