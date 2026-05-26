@@ -130,6 +130,139 @@
     flash: document.getElementById("scan-flash"),
   };
 
+  // ---------- Status (live diagnostics bar) ----------
+  //
+  // Exists to answer "why is the QR taking so long to scan." Tracks decode-loop
+  // frames-per-second, time since last successful scan, skipped-UPC count, and
+  // sync queue depth. The expandable panel exposes a rolling event log so a
+  // 7-second delay can be inspected after the fact.
+  const Status = (() => {
+    const MAX_EVENTS = 50;
+    const SLOW_MS = 5000;
+
+    const s = {
+      mode: "idle", // idle | scanning | error
+      framesInWindow: 0,
+      windowStart: Date.now(),
+      fps: 0,
+      lastScanAt: null,
+      skipped: 0,
+      pending: 0,
+      cameraInfo: null,
+      events: [],
+    };
+
+    const e = {};
+    let initialized = false;
+
+    function init() {
+      if (initialized) return;
+      initialized = true;
+      e.bar      = document.getElementById("status");
+      e.dot      = e.bar.querySelector(".state-dot");
+      e.state    = document.getElementById("status-state");
+      e.fps      = document.getElementById("status-fps");
+      e.since    = document.getElementById("status-since");
+      e.skipped  = document.getElementById("status-skipped");
+      e.pending  = document.getElementById("status-pending");
+      e.panel    = document.getElementById("status-panel");
+      e.camera   = document.getElementById("status-camera");
+      e.log      = document.getElementById("status-log");
+
+      e.bar.addEventListener("click", toggle);
+      e.bar.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); }
+      });
+
+      setInterval(tickBar, 200);
+      setInterval(tickFps, 1000);
+    }
+
+    function toggle() {
+      const opening = e.panel.hidden;
+      e.panel.hidden = !opening;
+      e.bar.setAttribute("aria-expanded", opening ? "true" : "false");
+      if (opening) renderPanel();
+    }
+
+    function pushEvent(kind, msg) {
+      s.events.push({ at: Date.now(), kind, msg });
+      if (s.events.length > MAX_EVENTS) s.events.shift();
+      if (!e.panel.hidden) renderPanel();
+    }
+
+    function tickFps() {
+      const now = Date.now();
+      const elapsed = (now - s.windowStart) / 1000;
+      s.fps = elapsed > 0 ? s.framesInWindow / elapsed : 0;
+      s.framesInWindow = 0;
+      s.windowStart = now;
+    }
+
+    function tickBar() {
+      if (!initialized) return;
+      const sinceMs = s.lastScanAt ? Date.now() - s.lastScanAt : null;
+      const sinceText =
+        sinceMs == null ? "—" :
+        sinceMs < 1000  ? "just now" :
+                          `${(sinceMs / 1000).toFixed(1)}s ago`;
+
+      let displayMode = s.mode;
+      if (displayMode === "scanning" && sinceMs != null && sinceMs > SLOW_MS) displayMode = "slow";
+
+      e.dot.dataset.state = displayMode;
+      e.state.textContent = s.mode;
+      e.fps.textContent   = s.mode === "scanning" ? `${Math.round(s.fps)} fps` : "—";
+      e.since.textContent = sinceText;
+
+      e.skipped.hidden = s.skipped === 0;
+      e.skipped.textContent = `${s.skipped} skipped`;
+
+      e.pending.hidden = s.pending === 0;
+      e.pending.textContent = `${s.pending} pending`;
+    }
+
+    function renderPanel() {
+      if (!initialized) return;
+      const c = s.cameraInfo;
+      e.camera.textContent = c
+        ? `${c.label}  ·  ${c.resolution}  ·  focus: ${c.focusMode || "?"}  ·  zoom: ${c.zoom != null ? c.zoom : "?"}`
+        : "(camera not started)";
+
+      const frag = document.createDocumentFragment();
+      for (let i = s.events.length - 1; i >= 0; i--) {
+        const ev = s.events[i];
+        const li = document.createElement("li");
+        const ts = document.createElement("span");
+        ts.className = "ts";
+        ts.textContent = new Date(ev.at).toLocaleTimeString([], { hour12: false });
+        const m = document.createElement("span");
+        m.className = "ev " + (ev.kind || "");
+        m.textContent = ev.msg;
+        li.append(ts, m);
+        frag.append(li);
+      }
+      e.log.innerHTML = "";
+      e.log.append(frag);
+    }
+
+    return {
+      init,
+      frame: () => { s.framesInWindow++; },
+      setMode: (m) => { s.mode = m; if (m === "idle") s.fps = 0; },
+      scanned: (code) => { s.lastScanAt = Date.now(); pushEvent("success", "scanned " + code); },
+      skippedUpc: (val) => { s.skipped++; pushEvent("warn", "skipped UPC " + val); },
+      setPending: (n) => { s.pending = Math.max(0, n | 0); },
+      setCameraInfo: (info) => { s.cameraInfo = info; if (e.panel && !e.panel.hidden) renderPanel(); },
+      log: (msg) => pushEvent("info", msg),
+      warn: (msg) => pushEvent("warn", msg),
+      error: (msg) => pushEvent("error", msg),
+      success: (msg) => pushEvent("success", msg),
+    };
+  })();
+
+  Status.init();
+
   let flashTimer = null;
   function flashSuccess() {
     if (!els.flash) return;
@@ -284,10 +417,19 @@
         await track.applyConstraints({ advanced });
       }
       console.log("Camera caps:", caps, "applied:", advanced);
+      const settings = track.getSettings ? track.getSettings() : {};
+      Status.setCameraInfo({
+        label: state_cameraLabel || "(unknown)",
+        resolution: `${settings.width || "?"}x${settings.height || "?"}`,
+        focusMode: settings.focusMode,
+        zoom: settings.zoom,
+      });
     } catch (err) {
       console.warn("applyTrackConstraints failed:", err);
     }
   }
+
+  let state_cameraLabel = "";
 
   async function startScanner() {
     if (scanner) return;
@@ -334,9 +476,14 @@
     }
 
     try {
-      await scanner.start(cameraSelector, scanConfig, onDecoded, () => {});
+      await scanner.start(cameraSelector, scanConfig, onDecoded, () => Status.frame());
       applyTrackConstraints();
-      if (cam) console.log("Camera selected:", cam.label, cam.id);
+      if (cam) {
+        console.log("Camera selected:", cam.label, cam.id);
+        state_cameraLabel = cam.label;
+      }
+      Status.setMode("scanning");
+      Status.success("camera started" + (cam ? " (" + cam.label + ")" : ""));
       els.startBtn.hidden = true;
       els.stopBtn.hidden = false;
     } catch (err) {
@@ -357,6 +504,8 @@
         toastMsg = "Camera error: " + (msg.slice(0, 80) || "unknown");
       }
       toast(toastMsg);
+      Status.setMode("error");
+      Status.error(toastMsg);
       try { await scanner.clear(); } catch (_) {}
       scanner = null;
     }
@@ -373,16 +522,20 @@
     scanner = null;
     els.startBtn.hidden = false;
     els.stopBtn.hidden = true;
+    Status.setMode("idle");
+    Status.log("camera stopped");
   }
 
   async function onDecoded(text) {
     const now = Date.now();
+    Status.frame();
 
     // Cans carry both a UPC barcode and the URL-bearing QR. Native
     // BarcodeDetector decodes either. UPC-A/EAN are purely numeric, 8–14
     // digits — silently skip them so the decoder keeps hunting for the QR
     // without interrupting the user.
     if (/^\d{8,14}$/.test(text)) {
+      Status.skippedUpc(text);
       return;
     }
 
@@ -400,6 +553,9 @@
       status: "pending",
     };
     await putScan(scan);
+    pendingCount++;
+    Status.setPending(pendingCount);
+    Status.scanned(scan.code || "(no code)");
     renderLastScan(scan);
     renderHistory();
     flashSuccess();
@@ -408,6 +564,8 @@
     // try to sync immediately; if offline, it'll wait
     syncPending();
   }
+
+  let pendingCount = 0;
 
   // ---------- Sync ----------
 
@@ -423,7 +581,10 @@
     syncing = true;
     try {
       const pending = await getPendingScans();
+      pendingCount = pending.length;
+      Status.setPending(pendingCount);
       if (pending.length === 0) return;
+      Status.log(`sync start (${pending.length} pending)`);
       let synced = 0, failed = 0;
       for (const scan of pending) {
         const ok = await postScan(scan);
@@ -431,8 +592,12 @@
           scan.status = "synced";
           await putScan(scan);
           synced++;
+          pendingCount = Math.max(0, pendingCount - 1);
+          Status.setPending(pendingCount);
+          Status.success("synced " + (scan.code || scan.id.slice(0, 8)));
         } else {
           failed++;
+          Status.error("sync failed: " + (scan.code || scan.id.slice(0, 8)));
         }
       }
       await renderHistory();
@@ -515,5 +680,9 @@
   // Init
   renderConnection();
   renderHistory();
-  syncPending();
+  (async () => {
+    pendingCount = (await getPendingScans()).length;
+    Status.setPending(pendingCount);
+    syncPending();
+  })();
 })();

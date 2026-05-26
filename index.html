@@ -87,6 +87,92 @@
     .status-pill.online .dot { background: var(--success); }
     .status-pill.offline .dot { background: var(--warning); }
 
+    /* Real-time diagnostics bar */
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      background: var(--surface);
+      border-radius: 10px;
+      margin-bottom: 8px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      flex-wrap: wrap;
+    }
+
+    .status-bar > * { white-space: nowrap; }
+
+    .status-bar .state-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      flex: 0 0 auto;
+    }
+    .status-bar .state-dot[data-state="scanning"] { background: var(--success); }
+    .status-bar .state-dot[data-state="slow"]     { background: var(--warning); }
+    .status-bar .state-dot[data-state="error"]    { background: var(--danger); }
+
+    .status-bar .status-state {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .status-bar .status-toggle {
+      margin-left: auto;
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      transition: transform 200ms;
+      display: inline-block;
+    }
+    .status-bar[aria-expanded="true"] .status-toggle {
+      transform: rotate(180deg);
+    }
+
+    .status-panel {
+      background: var(--surface);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+    }
+
+    .status-camera {
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      line-height: 1.5;
+      word-break: break-all;
+    }
+
+    .status-log {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      max-height: 240px;
+      overflow-y: auto;
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.68rem;
+      line-height: 1.6;
+    }
+
+    .status-log li {
+      display: flex;
+      gap: 8px;
+      padding: 1px 0;
+    }
+
+    .status-log .ts { color: var(--text-dim); flex: 0 0 auto; }
+    .status-log .ev { color: var(--text); word-break: break-all; }
+    .status-log .ev.warn    { color: var(--warning); }
+    .status-log .ev.error   { color: var(--danger); }
+    .status-log .ev.success { color: var(--success); }
+
     section {
       background: var(--surface);
       border-radius: 14px;
@@ -383,6 +469,20 @@
     <h1>Can Scan</h1>
     <div id="connection-status" class="status-pill"><span class="dot"></span><span class="label">…</span></div>
   </header>
+
+  <div id="status" class="status-bar" role="button" tabindex="0" aria-expanded="false" aria-controls="status-panel">
+    <span class="state-dot" data-state="idle"></span>
+    <span id="status-state" class="status-state">idle</span>
+    <span id="status-fps">—</span>
+    <span id="status-since">—</span>
+    <span id="status-skipped" hidden></span>
+    <span id="status-pending" hidden></span>
+    <span class="status-toggle">▾</span>
+  </div>
+  <div id="status-panel" class="status-panel" hidden>
+    <div id="status-camera" class="status-camera">(camera not started)</div>
+    <ul id="status-log" class="status-log"></ul>
+  </div>
 
   <section id="scanner-section">
     <header>
