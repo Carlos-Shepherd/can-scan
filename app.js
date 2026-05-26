@@ -395,6 +395,65 @@
     return err.message || err.name || String(err);
   }
 
+  // ----- Parallel decode loop -----
+  // html5-qrcode hands us only the first code per frame. When BarcodeDetector
+  // returns [UPC, QR] for a can that has both, html5-qrcode hands us the UPC,
+  // we filter it, and the QR is silently dropped. This second loop runs
+  // alongside, processes ALL codes per frame, and prefers the non-UPC one.
+  let customLoopTimer = null;
+  let customLoopDetector = null;
+  let customLoopHits = 0;
+  const CUSTOM_LOOP_INTERVAL_MS = 100; // 10 fps — enough for sub-second decode
+
+  async function startCustomDecodeLoop() {
+    if (typeof BarcodeDetector === "undefined") {
+      Status.warn("custom loop: BarcodeDetector unavailable");
+      return;
+    }
+    try {
+      const formats = await BarcodeDetector.getSupportedFormats();
+      customLoopDetector = new BarcodeDetector({ formats });
+      Status.log(`custom decode loop ready (${formats.length} formats)`);
+    } catch (e) {
+      Status.warn("custom loop init failed: " + (e.message || e));
+      return;
+    }
+    customLoopHits = 0;
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+
+    customLoopTimer = setInterval(async () => {
+      if (!customLoopDetector) return;
+      const video = document.querySelector("#reader video");
+      if (!video || !video.videoWidth) return;
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      try {
+        ctx.drawImage(video, 0, 0);
+        const codes = await customLoopDetector.detect(canvas);
+        if (codes.length === 0) return;
+        // Prefer the first non-UPC. Falls through to UPC only if that's all
+        // that's in frame (existing onDecoded silently skips it).
+        const pick = codes.find((c) => !/^\d{8,14}$/.test(c.rawValue)) || codes[0];
+        if (customLoopHits === 0) {
+          Status.success(`custom loop first hit: ${pick.format}`);
+        }
+        customLoopHits++;
+        onDecoded(pick.rawValue);
+      } catch (_) {
+        // ignore per-frame errors
+      }
+    }, CUSTOM_LOOP_INTERVAL_MS);
+  }
+
+  function stopCustomDecodeLoop() {
+    if (customLoopTimer) {
+      clearInterval(customLoopTimer);
+      customLoopTimer = null;
+    }
+    customLoopDetector = null;
+  }
+
   // Phones with multiple back cameras (Pixel, Samsung, iPhone) expose all of
   // them with facingMode=environment. The browser frequently picks the wrong
   // one — on Samsung the default lands on a depth/macro/telephoto sensor that
@@ -546,6 +605,7 @@
       Status.resetSession();
       await scanner.start(cameraSelector, scanConfig, onDecoded, () => Status.frame());
       applyTrackConstraints();
+      startCustomDecodeLoop(); // primary decode path; preserves html5-qrcode's loop as fallback
       if (cam) {
         console.log("Camera selected:", cam.label, cam.id);
         state_cameraLabel = cam.label;
@@ -582,6 +642,7 @@
 
   async function stopScanner() {
     if (!scanner) return;
+    stopCustomDecodeLoop();
     try {
       await scanner.stop();
       await scanner.clear();
