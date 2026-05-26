@@ -118,6 +118,7 @@
   const els = {
     startBtn: document.getElementById("start-btn"),
     stopBtn: document.getElementById("stop-btn"),
+    testBtn: document.getElementById("test-btn"),
     syncBtn: document.getElementById("sync-btn"),
     noteInput: document.getElementById("note-input"),
     lastScanSection: document.getElementById("last-scan-section"),
@@ -150,6 +151,10 @@
       pending: 0,
       cameraInfo: null,
       events: [],
+      // Decoder telemetry — reset each time the camera starts
+      sessionStart: null,    // ms epoch when camera started
+      totalAttempts: 0,      // frames examined (success + failure)
+      totalDecodes: 0,       // raw decoder hits (before our UPC/dedupe filters)
     };
 
     const e = {};
@@ -167,6 +172,7 @@
       e.pending  = document.getElementById("status-pending");
       e.panel    = document.getElementById("status-panel");
       e.camera   = document.getElementById("status-camera");
+      e.decoder  = document.getElementById("status-decoder");
       e.log      = document.getElementById("status-log");
 
       e.bar.addEventListener("click", toggle);
@@ -220,6 +226,21 @@
 
       e.pending.hidden = s.pending === 0;
       e.pending.textContent = `${s.pending} pending`;
+
+      if (e.panel && !e.panel.hidden) renderDecoder();
+    }
+
+    function renderDecoder() {
+      if (!initialized || !e.decoder) return;
+      if (s.sessionStart) {
+        const elapsed = Math.max(1, Math.round((Date.now() - s.sessionStart) / 1000));
+        const rate = (s.totalAttempts / elapsed).toFixed(1);
+        e.decoder.textContent =
+          `decoder: ${s.totalAttempts} attempts / ${s.totalDecodes} decodes ` +
+          `in ${elapsed}s (${rate}/s)`;
+      } else {
+        e.decoder.textContent = "";
+      }
     }
 
     function renderPanel() {
@@ -228,6 +249,8 @@
       e.camera.textContent = c
         ? `${c.label}  ·  ${c.resolution}  ·  focus: ${c.focusMode || "?"}  ·  zoom: ${c.zoom != null ? c.zoom : "?"}`
         : "(camera not started)";
+
+      renderDecoder();
 
       const frag = document.createDocumentFragment();
       for (let i = s.events.length - 1; i >= 0; i--) {
@@ -248,7 +271,14 @@
 
     return {
       init,
-      frame: () => { s.framesInWindow++; },
+      frame: () => { s.framesInWindow++; s.totalAttempts++; },
+      decoded: () => { s.totalDecodes++; },
+      resetSession: () => {
+        s.sessionStart = Date.now();
+        s.totalAttempts = 0;
+        s.totalDecodes = 0;
+        if (e.panel && !e.panel.hidden) renderDecoder();
+      },
       setMode: (m) => { s.mode = m; if (m === "idle") s.fps = 0; },
       scanned: (code) => { s.lastScanAt = Date.now(); pushEvent("success", "scanned " + code); },
       skippedUpc: (val) => { s.skipped++; pushEvent("warn", "skipped UPC " + val); },
@@ -519,6 +549,7 @@
     }
 
     try {
+      Status.resetSession();
       await scanner.start(cameraSelector, scanConfig, onDecoded, () => Status.frame());
       applyTrackConstraints();
       if (cam) {
@@ -529,6 +560,7 @@
       Status.success("camera started" + (cam ? " (" + cam.label + ")" : ""));
       els.startBtn.hidden = true;
       els.stopBtn.hidden = false;
+      if (els.testBtn) els.testBtn.hidden = false;
     } catch (err) {
       const msg = errorText(err);
       console.error("Camera start failed:", err, "—", msg);
@@ -565,13 +597,57 @@
     scanner = null;
     els.startBtn.hidden = false;
     els.stopBtn.hidden = true;
+    if (els.testBtn) els.testBtn.hidden = true;
     Status.setMode("idle");
     Status.log("camera stopped");
+  }
+
+  // Phase-2 diagnostic: snapshot the current frame, throw BarcodeDetector at it
+  // with EVERY supported format on the FULL frame (no qrbox crop). Isolates
+  // whether the live loop is the bug vs the decoder itself vs framing.
+  async function testScan() {
+    const video = document.querySelector("#reader video");
+    if (!video || !video.videoWidth) {
+      Status.warn("test: no live video");
+      return;
+    }
+    if (typeof BarcodeDetector === "undefined") {
+      Status.warn("test: BarcodeDetector unavailable in this browser");
+      return;
+    }
+    Status.log("test: capturing frame…");
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(video, 0, 0);
+
+      const allFormats = await BarcodeDetector.getSupportedFormats();
+      const detector = new BarcodeDetector({ formats: allFormats });
+      const t0 = performance.now();
+      const codes = await detector.detect(canvas);
+      const dt = Math.round(performance.now() - t0);
+
+      if (codes.length === 0) {
+        Status.warn(
+          `test: 0 codes in ${canvas.width}x${canvas.height} (${dt}ms, ` +
+          `tried: ${allFormats.join(", ")})`
+        );
+      } else {
+        for (const c of codes) {
+          Status.success(`test: ${c.format} = ${c.rawValue.slice(0, 80)}`);
+        }
+        Status.log(`test: ${codes.length} found in ${dt}ms`);
+      }
+    } catch (e) {
+      Status.error("test: " + (e.message || e));
+    }
   }
 
   async function onDecoded(text) {
     const now = Date.now();
     Status.frame();
+    Status.decoded(); // raw decoder hit, before any filtering
 
     // Cans carry both a UPC barcode and the URL-bearing QR. Native
     // BarcodeDetector decodes either. UPC-A/EAN are purely numeric, 8–14
@@ -702,6 +778,7 @@
 
   els.startBtn.addEventListener("click", startScanner);
   els.stopBtn.addEventListener("click", stopScanner);
+  if (els.testBtn) els.testBtn.addEventListener("click", testScan);
   els.syncBtn.addEventListener("click", () => {
     if (!navigator.onLine) { toast("You're offline — will sync when back online"); return; }
     syncPending();

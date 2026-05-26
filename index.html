@@ -150,6 +150,21 @@
       word-break: break-all;
     }
 
+    .status-decoder {
+      margin-bottom: 8px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      line-height: 1.5;
+      min-height: 1em;
+    }
+
+    .status-decoder:empty {
+      display: none;
+    }
+
     .status-log {
       list-style: none;
       padding: 0;
@@ -481,6 +496,7 @@
   </div>
   <div id="status-panel" class="status-panel" hidden>
     <div id="status-camera" class="status-camera">(camera not started)</div>
+    <div id="status-decoder" class="status-decoder"></div>
     <ul id="status-log" class="status-log"></ul>
   </div>
 
@@ -492,6 +508,7 @@
     <div class="scanner-controls">
       <button id="start-btn" type="button">Start camera</button>
       <button id="stop-btn" type="button" class="secondary" hidden>Stop camera</button>
+      <button id="test-btn" type="button" class="secondary small" hidden title="Capture current frame and probe with all decoder formats">Test</button>
     </div>
     <div class="note-row">
       <label for="note-input">Note for next scans (optional)</label>
